@@ -122,7 +122,7 @@ This is the easiest and recommended way to run the application.
 2.  **Run the Docker container:**
     This command runs the container in detached mode (`-d`) and maps port 8080 on your host to port 8080 in the container.
     ```bash
-    docker run -d --name ai_container -p 8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate
+    docker run -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate
     ```
 
 ### Local Development
