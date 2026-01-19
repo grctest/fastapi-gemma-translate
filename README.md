@@ -139,7 +139,33 @@ Alternatively you can pull and run my docker image:
     ```bash
     docker run -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate
     ```
-    
+
+---
+
+The above were for CPU-only mode, if you want Nvidia CUDA GPU support you'll need to use the CudaDockerfile, either by:
+
+1. **Building the Docker image:**
+   ```bash
+   docker build -t fastapi_gemma_translate:cuda -f CudaDockerfile .
+   ```
+
+2. **Pulling the Docker image:**
+    ```bash
+    docker image pull grctest/fastapi_gemma_translate:cuda
+    ```
+
+    Then you need to use the GPU flag:
+
+    ```bash
+    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate:cuda
+    ```
+
+    ```bash
+    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate:cuda
+    ```
+
+Note: The `C:/Users/username/Desktop/git/fastapi-gemma-translate/_models` folder can be replaced by the path you've downloaded the gguf folders+files to.
+
 ### Local Development
 
 For development, you can run the application directly with Uvicorn, which enables auto-reloading.
