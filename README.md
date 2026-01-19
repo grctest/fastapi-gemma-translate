@@ -125,6 +125,21 @@ This is the easiest and recommended way to run the application.
     docker run -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate
     ```
 
+---
+
+Alternatively you can pull and run my docker image:
+
+1. **Pull the Docker image:**
+    ```bash
+    docker image pull grctest/fastapi_gemma_translate
+    ```
+
+2. **Run the Docker container:**
+    This command runs the container in detached mode (`-d`) and maps port 8080 on your host to port 8080 in the container.
+    ```bash
+    docker run -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate
+    ```
+    
 ### Local Development
 
 For development, you can run the application directly with Uvicorn, which enables auto-reloading.
