@@ -15,7 +15,10 @@ WORKDIR /code
 ENV GGML_CUDA=on
 ENV CUDA_DOCKER_ARCH=all
 
-RUN CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --break-system-packages
+RUN CMAKE_ARGS="-DGGML_CUDA=on" \
+    FORCE_CMAKE=1 \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 \
+    pip install llama-cpp-python --no-cache-dir --break-system-packages
 
 # Install Python dependencies
 RUN pip install "fastapi[standard]" "uvicorn[standard]" httpx --break-system-packages
