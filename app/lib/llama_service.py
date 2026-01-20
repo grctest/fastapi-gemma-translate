@@ -42,7 +42,10 @@ def _apply_env_overrides(config: LlamaConfig) -> LlamaConfig:
             gpu_layers = int(gpu_layers_env)
         except ValueError as exc:
             raise ValueError("LLAMA_N_GPU_LAYERS must be an integer") from exc
-        config.n_gpu_layers = _clamp_int(gpu_layers, 0, max_gpu_layers)
+        if gpu_layers == -1:
+            config.n_gpu_layers = -1
+        else:
+            config.n_gpu_layers = _clamp_int(gpu_layers, 0, max_gpu_layers)
 
     return config
 

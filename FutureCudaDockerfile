@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     git \
     build-essential \
+    ninja-build \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
