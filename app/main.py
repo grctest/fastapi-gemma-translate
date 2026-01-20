@@ -15,7 +15,14 @@ class TranslationRequest(BaseModel):
     target_lang_code: str = Field(..., min_length=2)
     text: str = Field(..., min_length=1)
     content_type: str = Field("text", description="Only 'text' is supported")
-    max_new_tokens: int = Field(200, ge=1, le=2048)
+    max_new_tokens: int = Field(200, ge=1, le=2000)
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
+    top_k: int | None = Field(None, ge=0, le=1000)
+    min_p: float | None = Field(None, ge=0.0, le=1.0)
+    repeat_penalty: float | None = Field(None, ge=0.0, le=2.0)
+    presence_penalty: float | None = Field(None, ge=0.0, le=2.0)
+    frequency_penalty: float | None = Field(None, ge=0.0, le=2.0)
 
     @field_validator("model")
     @classmethod
@@ -67,6 +74,13 @@ def translate(request: TranslationRequest):
             text=request.text,
             content_type=request.content_type,
             max_new_tokens=request.max_new_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
+            min_p=request.min_p,
+            repeat_penalty=request.repeat_penalty,
+            presence_penalty=request.presence_penalty,
+            frequency_penalty=request.frequency_penalty,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

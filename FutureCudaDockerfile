@@ -13,12 +13,16 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /code
 
 ENV GGML_CUDA=on
-ENV CUDA_DOCKER_ARCH=all
+ENV GGML_CUDA_ARCH="100;120"
+ENV CUDA_DOCKER_ARCH=100
+#ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+#ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
-RUN CMAKE_ARGS="-DGGML_CUDA=on" \
+RUN CMAKE_ARGS="-DGGML_CUDA=on -DGGML_CUDA_ARCH=${GGML_CUDA_ARCH}" \
     FORCE_CMAKE=1 \
     CMAKE_BUILD_PARALLEL_LEVEL=2 \
-    pip install llama-cpp-python --no-cache-dir --break-system-packages
+    pip install llama-cpp-python --no-cache-dir --break-system-packages \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu125
 
 # Install Python dependencies
 RUN pip install "fastapi[standard]" "uvicorn[standard]" httpx --break-system-packages
