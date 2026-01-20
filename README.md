@@ -146,22 +146,30 @@ The above were for CPU-only mode, if you want Nvidia CUDA GPU support you'll nee
 
 1. **Building the Docker image:**
    ```bash
-   docker build -t fastapi_gemma_translate:cuda -f CudaDockerfile .
+   docker build -t fastapi_gemma_translate:legacy -f LegacyCudaDockerfile .
+   docker build -t fastapi_gemma_translate:mainstream -f MainstreamCudaDockerfile .
+   docker build -t fastapi_gemma_translate:future -f FutureCudaDockerfile .
+   ```
+
+   ```bash
+   docker build -t grctest/fastapi_gemma_translate:legacy -f LegacyCudaDockerfile .
+   docker build -t grctest/fastapi_gemma_translate:mainstream -f MainstreamCudaDockerfile .
+   docker build -t grctest/fastapi_gemma_translate:future -f FutureCudaDockerfile .
    ```
 
 2. **Pulling the Docker image:**
     ```bash
-    docker image pull grctest/fastapi_gemma_translate:cuda
+    docker image pull grctest/fastapi_gemma_translate:legacy
     ```
 
     Then you need to use the GPU flag:
 
     ```bash
-    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate:cuda
+    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate:legacy
     ```
 
     ```bash
-    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate:cuda
+    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate:legacy
     ```
 
 Note: The `C:/Users/username/Desktop/git/fastapi-gemma-translate/_models` folder can be replaced by the path you've downloaded the gguf folders+files to.
