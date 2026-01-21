@@ -122,7 +122,7 @@ This is the easiest and recommended way to run the application.
 2.  **Run the Docker container:**
     This command runs the container in detached mode (`-d`) and maps port 8080 on your host to port 8080 in the container.
     ```bash
-    docker run -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate
+    docker run -d --name ai_container_cpu -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate
     ```
 
 ---
@@ -137,7 +137,7 @@ Alternatively you can pull and run my docker image:
 2. **Run the Docker container:**
     This command runs the container in detached mode (`-d`) and maps port 8080 on your host to port 8080 in the container.
     ```bash
-    docker run -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate
+    docker run -d --name ai_container_cpu -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate
     ```
 
 ---
@@ -165,11 +165,11 @@ The above were for CPU-only mode, if you want Nvidia CUDA GPU support you'll nee
     Then you need to use the GPU flag:
 
     ```bash
-    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models fastapi_gemma_translate_cuda:legacy
+    docker run --gpus all -d --name ai_container_gpu -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models -e LLAMA_N_GPU_LAYERS=-1 fastapi_gemma_translate_cuda:legacy
     ```
 
     ```bash
-    docker run --gpus all -d --name ai_container -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models grctest/fastapi_gemma_translate_cuda:legacy
+    docker run --gpus all -d --name ai_container_cuda -p 127.0.0.1:8080:8080 -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models -e LLAMA_N_GPU_LAYERS=-1 grctest/fastapi_gemma_translate_cuda:legacy
     ```
 
 Note: The `C:/Users/username/Desktop/git/fastapi-gemma-translate/_models` folder can be replaced by the path you've downloaded the gguf folders+files to.
