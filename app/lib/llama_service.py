@@ -20,6 +20,55 @@ _model_cache: Dict[str, Llama] = {}
 _cache_lock = Lock()
 
 
+def _build_sampling_kwargs(
+    temperature: Optional[float],
+    top_p: Optional[float],
+    top_k: Optional[int],
+    min_p: Optional[float],
+    repeat_penalty: Optional[float],
+    presence_penalty: Optional[float],
+    frequency_penalty: Optional[float],
+) -> Dict[str, object]:
+    sampling_kwargs: Dict[str, object] = {}
+    if temperature is not None:
+        sampling_kwargs["temperature"] = temperature
+    if top_p is not None:
+        sampling_kwargs["top_p"] = top_p
+    if top_k is not None:
+        sampling_kwargs["top_k"] = top_k
+    if min_p is not None:
+        sampling_kwargs["min_p"] = min_p
+    if repeat_penalty is not None:
+        sampling_kwargs["repeat_penalty"] = repeat_penalty
+    if presence_penalty is not None:
+        sampling_kwargs["presence_penalty"] = presence_penalty
+    if frequency_penalty is not None:
+        sampling_kwargs["frequency_penalty"] = frequency_penalty
+    return sampling_kwargs
+
+
+def _normalize_lang_code(code: str) -> str:
+    return code.replace("_", "-")
+
+
+def _manual_prompt_text(
+    source_lang: str,
+    source_lang_code: str,
+    target_lang: str,
+    target_lang_code: str,
+    text: str,
+) -> str:
+    return (
+        f"You are a professional {source_lang} ({source_lang_code}) to {target_lang} "
+        f"({target_lang_code}) translator. Your goal is to accurately convey the meaning and "
+        f"nuances of the original {source_lang} text while adhering to {target_lang} grammar, "
+        f"vocabulary, and cultural sensitivities.\n"
+        f"Produce only the {target_lang} translation, without any additional explanations or "
+        f"commentary. Please translate the following {source_lang} text into {target_lang}:\n\n\n"
+        f"{text}"
+    )
+
+
 def _clamp_int(value: int, min_value: int, max_value: int) -> int:
     return max(min_value, min(max_value, value))
 
@@ -88,21 +137,15 @@ def translate_text(
 
     llama = get_llama(model_name)
 
-    sampling_kwargs: Dict[str, object] = {}
-    if temperature is not None:
-        sampling_kwargs["temperature"] = temperature
-    if top_p is not None:
-        sampling_kwargs["top_p"] = top_p
-    if top_k is not None:
-        sampling_kwargs["top_k"] = top_k
-    if min_p is not None:
-        sampling_kwargs["min_p"] = min_p
-    if repeat_penalty is not None:
-        sampling_kwargs["repeat_penalty"] = repeat_penalty
-    if presence_penalty is not None:
-        sampling_kwargs["presence_penalty"] = presence_penalty
-    if frequency_penalty is not None:
-        sampling_kwargs["frequency_penalty"] = frequency_penalty
+    sampling_kwargs = _build_sampling_kwargs(
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        min_p=min_p,
+        repeat_penalty=repeat_penalty,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+    )
 
     response = llama.create_chat_completion(
         messages=[
@@ -123,4 +166,64 @@ def translate_text(
     )
 
     message = response["choices"][0]["message"]["content"]
+    return message.strip()
+
+
+def experimental_translate_text(
+    model_name: str,
+    source_lang_code: str,
+    target_lang_code: str,
+    text: str,
+    content_type: str = "text",
+    max_new_tokens: int = 200,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    min_p: Optional[float] = None,
+    repeat_penalty: Optional[float] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+) -> str:
+    if content_type != "text":
+        raise ValueError("Only 'text' content_type is supported by the experimental endpoint.")
+
+    llama = get_llama(model_name)
+
+    source_lang_code = _normalize_lang_code(source_lang_code)
+    target_lang_code = _normalize_lang_code(target_lang_code)
+
+    source_lang = source_lang_code
+    target_lang = target_lang_code
+
+    prompt_text = _manual_prompt_text(
+        source_lang=source_lang,
+        source_lang_code=source_lang_code,
+        target_lang=target_lang,
+        target_lang_code=target_lang_code,
+        text=text,
+    )
+
+    full_prompt = (
+        f"<start_of_turn>user\n{prompt_text}<end_of_turn>\n"
+        f"<start_of_turn>model\n"
+    )
+
+    sampling_kwargs = _build_sampling_kwargs(
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        min_p=min_p,
+        repeat_penalty=repeat_penalty,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+    )
+
+    response = llama(
+        full_prompt,
+        max_tokens=max_new_tokens,
+        stop=["<end_of_turn>"],
+        **sampling_kwargs,
+    )
+
+    message = response["choices"][0]["text"]
     return message.strip()
