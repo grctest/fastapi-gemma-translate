@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import gc
 import os
 from threading import Lock
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 
 from llama_cpp import Llama
 
@@ -18,6 +19,7 @@ class LlamaConfig:
 
 _model_cache: Dict[str, Llama] = {}
 _cache_lock = Lock()
+_last_model_name: Optional[str] = None
 
 
 def _build_sampling_kwargs(
@@ -99,12 +101,14 @@ def _apply_env_overrides(config: LlamaConfig) -> LlamaConfig:
     return config
 
 def get_llama(model_name: str, config: Optional[LlamaConfig] = None) -> Llama:
+    global _last_model_name
     if config is None:
         config = LlamaConfig()
     config = _apply_env_overrides(config)
 
     with _cache_lock:
         if model_name in _model_cache:
+            _last_model_name = model_name
             return _model_cache[model_name]
 
         model_path = resolve_model_path(model_name)
@@ -115,7 +119,40 @@ def get_llama(model_name: str, config: Optional[LlamaConfig] = None) -> Llama:
             n_gpu_layers=config.n_gpu_layers,
         )
         _model_cache[model_name] = llama
+        _last_model_name = model_name
         return llama
+
+
+def unload_model(model_name: str) -> bool:
+    """Unloads a model from memory and frees resources."""
+    global _last_model_name
+    with _cache_lock:
+        llama = _model_cache.pop(model_name, None)
+        if _last_model_name == model_name:
+            _last_model_name = None
+
+    if llama is None:
+        return False
+
+    # Attempt to call close if available in llama-cpp-python
+    if hasattr(llama, "close"):
+        try:
+            llama.close()
+        except Exception:
+            pass
+
+    del llama
+    gc.collect()
+    return True
+
+
+def _maybe_unload_previous_model(requested_model: str) -> None:
+    """If a different model is currently loaded, unload it first."""
+    with _cache_lock:
+        prev_model = _last_model_name
+
+    if prev_model is not None and prev_model != requested_model:
+        unload_model(prev_model)
 
 def translate_text(
     model_name: str,
@@ -135,6 +172,7 @@ def translate_text(
     if content_type != "text":
         raise ValueError("Only 'text' content_type is supported by GGUF models in this API.")
 
+    _maybe_unload_previous_model(model_name)
     llama = get_llama(model_name)
 
     sampling_kwargs = _build_sampling_kwargs(
@@ -187,6 +225,7 @@ def experimental_translate_text(
     if content_type != "text":
         raise ValueError("Only 'text' content_type is supported by the experimental endpoint.")
 
+    _maybe_unload_previous_model(model_name)
     llama = get_llama(model_name)
 
     source_lang_code = _normalize_lang_code(source_lang_code)
