@@ -202,6 +202,12 @@ Once the server is running, you can access the interactive API documentation:
 
 ---
 
+## Real life usage
+
+This FastAPI Gemma Translate Docker container code is used by [Metalglot](https://metalglot.com) software translation tool!
+
+---
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
