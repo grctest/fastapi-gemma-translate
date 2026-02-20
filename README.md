@@ -191,6 +191,23 @@ For development, you can run the application directly with Uvicorn, which enable
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
+### Concurrency Tuning (Recommended for CUDA stability)
+
+`llama-cpp-python` GGUF inference can become unstable under heavy parallel requests on some CUDA setups.
+This service now includes a built-in inference gate:
+
+```bash
+# safest default: serialize inference
+set LLAMA_MAX_CONCURRENT_INFERENCES=1
+
+# max waiting time in seconds before returning HTTP 503
+set LLAMA_INFERENCE_ACQUIRE_TIMEOUT_SECONDS=45
+```
+
+Notes:
+* Keep `LLAMA_MAX_CONCURRENT_INFERENCES=1` for 12B/27B models unless you have validated higher values.
+* When queue wait exceeds timeout, API returns `503` instead of crashing the process.
+
 ---
 
 ## API Usage

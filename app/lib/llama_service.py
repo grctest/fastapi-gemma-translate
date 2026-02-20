@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import gc
+import logging
 import os
-from threading import Lock
-from typing import Dict, Iterable, Optional
+from threading import Lock, Semaphore
+from typing import Dict, Optional
+from contextlib import contextmanager
 
 from llama_cpp import Llama
 
 from .model_registry import resolve_model_path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -20,6 +24,87 @@ class LlamaConfig:
 _model_cache: Dict[str, Llama] = {}
 _cache_lock = Lock()
 _last_model_name: Optional[str] = None
+
+
+class InferenceOverloadedError(RuntimeError):
+    """Raised when the inference queue is saturated for too long."""
+
+
+def _get_env_int(name: str, default: int, min_value: int, max_value: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning("%s=%r is invalid; using default=%d", name, raw_value, default)
+        return default
+
+    clamped = _clamp_int(parsed, min_value, max_value)
+    if clamped != parsed:
+        logger.warning(
+            "%s=%d is out of range [%d, %d]; clamped to %d",
+            name,
+            parsed,
+            min_value,
+            max_value,
+            clamped,
+        )
+    return clamped
+
+
+def _get_env_float(name: str, default: float, min_value: float, max_value: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        logger.warning("%s=%r is invalid; using default=%.2f", name, raw_value, default)
+        return default
+
+    clamped = max(min_value, min(max_value, parsed))
+    if clamped != parsed:
+        logger.warning(
+            "%s=%.3f is out of range [%.3f, %.3f]; clamped to %.3f",
+            name,
+            parsed,
+            min_value,
+            max_value,
+            clamped,
+        )
+    return clamped
+
+
+_max_concurrent_inferences = _get_env_int(
+    "LLAMA_MAX_CONCURRENT_INFERENCES",
+    default=1,
+    min_value=1,
+    max_value=64,
+)
+_inference_acquire_timeout_seconds = _get_env_float(
+    "LLAMA_INFERENCE_ACQUIRE_TIMEOUT_SECONDS",
+    default=45.0,
+    min_value=0.1,
+    max_value=600.0,
+)
+_inference_semaphore = Semaphore(_max_concurrent_inferences)
+
+
+@contextmanager
+def _acquire_inference_slot():
+    acquired = _inference_semaphore.acquire(timeout=_inference_acquire_timeout_seconds)
+    if not acquired:
+        raise InferenceOverloadedError(
+            "Inference queue timeout reached. Try again later or reduce request concurrency."
+        )
+
+    try:
+        yield
+    finally:
+        _inference_semaphore.release()
 
 
 def _build_sampling_kwargs(
@@ -172,39 +257,40 @@ def translate_text(
     if content_type != "text":
         raise ValueError("Only 'text' content_type is supported by GGUF models in this API.")
 
-    _maybe_unload_previous_model(model_name)
-    llama = get_llama(model_name)
+    with _acquire_inference_slot():
+        _maybe_unload_previous_model(model_name)
+        llama = get_llama(model_name)
 
-    sampling_kwargs = _build_sampling_kwargs(
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        min_p=min_p,
-        repeat_penalty=repeat_penalty,
-        presence_penalty=presence_penalty,
-        frequency_penalty=frequency_penalty,
-    )
+        sampling_kwargs = _build_sampling_kwargs(
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            repeat_penalty=repeat_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
 
-    response = llama.create_chat_completion(
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "source_lang_code": source_lang_code,
-                        "target_lang_code": target_lang_code,
-                        "text": text,
-                    }
-                ],
-            }
-        ],
-        max_tokens=max_new_tokens,
-        **sampling_kwargs,
-    )
+        response = llama.create_chat_completion(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "source_lang_code": source_lang_code,
+                            "target_lang_code": target_lang_code,
+                            "text": text,
+                        }
+                    ],
+                }
+            ],
+            max_tokens=max_new_tokens,
+            **sampling_kwargs,
+        )
 
-    message = response["choices"][0]["message"]["content"]
-    return message.strip()
+        message = response["choices"][0]["message"]["content"]
+        return message.strip()
 
 
 def experimental_translate_text(
@@ -225,44 +311,45 @@ def experimental_translate_text(
     if content_type != "text":
         raise ValueError("Only 'text' content_type is supported by the experimental endpoint.")
 
-    _maybe_unload_previous_model(model_name)
-    llama = get_llama(model_name)
+    with _acquire_inference_slot():
+        _maybe_unload_previous_model(model_name)
+        llama = get_llama(model_name)
 
-    source_lang_code = _normalize_lang_code(source_lang_code)
-    target_lang_code = _normalize_lang_code(target_lang_code)
+        source_lang_code = _normalize_lang_code(source_lang_code)
+        target_lang_code = _normalize_lang_code(target_lang_code)
 
-    source_lang = source_lang_code
-    target_lang = target_lang_code
+        source_lang = source_lang_code
+        target_lang = target_lang_code
 
-    prompt_text = _manual_prompt_text(
-        source_lang=source_lang,
-        source_lang_code=source_lang_code,
-        target_lang=target_lang,
-        target_lang_code=target_lang_code,
-        text=text,
-    )
+        prompt_text = _manual_prompt_text(
+            source_lang=source_lang,
+            source_lang_code=source_lang_code,
+            target_lang=target_lang,
+            target_lang_code=target_lang_code,
+            text=text,
+        )
 
-    full_prompt = (
-        f"<start_of_turn>user\n{prompt_text}<end_of_turn>\n"
-        f"<start_of_turn>model\n"
-    )
+        full_prompt = (
+            f"<start_of_turn>user\n{prompt_text}<end_of_turn>\n"
+            f"<start_of_turn>model\n"
+        )
 
-    sampling_kwargs = _build_sampling_kwargs(
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        min_p=min_p,
-        repeat_penalty=repeat_penalty,
-        presence_penalty=presence_penalty,
-        frequency_penalty=frequency_penalty,
-    )
+        sampling_kwargs = _build_sampling_kwargs(
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            repeat_penalty=repeat_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
 
-    response = llama(
-        full_prompt,
-        max_tokens=max_new_tokens,
-        stop=["<end_of_turn>"],
-        **sampling_kwargs,
-    )
+        response = llama(
+            full_prompt,
+            max_tokens=max_new_tokens,
+            stop=["<end_of_turn>"],
+            **sampling_kwargs,
+        )
 
-    message = response["choices"][0]["text"]
-    return message.strip()
+        message = response["choices"][0]["text"]
+        return message.strip()

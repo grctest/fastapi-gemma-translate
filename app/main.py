@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from lib.llama_service import experimental_translate_text, translate_text
+from lib.llama_service import (
+    InferenceOverloadedError,
+    experimental_translate_text,
+    translate_text,
+)
 from lib.locales import EXPERIMENTAL_SUPPORTED_LOCALES, SUPPORTED_LOCALES
 from lib.model_registry import list_model_names
 
 app = FastAPI(title="FastAPI Gemma Translate")
+logger = logging.getLogger(__name__)
 
 class TranslationRequest(BaseModel):
     model: str = Field(..., description="Model name present in app/models")
@@ -127,8 +134,13 @@ def translate(request: TranslationRequest):
             presence_penalty=request.presence_penalty,
             frequency_penalty=request.frequency_penalty,
         )
+    except InferenceOverloadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unhandled /translate inference failure")
+        raise HTTPException(status_code=500, detail="Translation backend failed") from exc
 
     return TranslationResponse(model=request.model, translated_text=translated)
 
@@ -151,7 +163,12 @@ def experimental_translate(request: ExperimentalTranslationRequest):
             presence_penalty=request.presence_penalty,
             frequency_penalty=request.frequency_penalty,
         )
+    except InferenceOverloadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unhandled /experimental_translation inference failure")
+        raise HTTPException(status_code=500, detail="Translation backend failed") from exc
 
     return TranslationResponse(model=request.model, translated_text=translated)
