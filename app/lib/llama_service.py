@@ -4,8 +4,10 @@ from dataclasses import dataclass
 import gc
 import os
 import base64
+import logging
+from contextlib import contextmanager
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Semaphore
 from typing import Dict, Optional
 
 from llama_cpp import Llama
@@ -17,6 +19,8 @@ except ImportError:  # pragma: no cover - depends on llama-cpp-python build
 
 from .model_registry import resolve_model_path
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class LlamaConfig:
@@ -24,12 +28,93 @@ class LlamaConfig:
     n_threads: Optional[int] = None
     n_gpu_layers: int = 0
 
+
+class InferenceOverloadedError(RuntimeError):
+    """Raised when inference cannot obtain a slot before timeout."""
+
 _model_cache: Dict[str, Llama] = {}
 _cache_lock = Lock()
 _loaded_model_name: Optional[str] = None
 _is_loading: bool = False
 _loaded_model_is_vision_enabled: bool = False
 _loaded_mmproj_path: Optional[str] = None
+
+
+def _get_env_int(name: str, default: int, min_value: int, max_value: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning("%s=%r is invalid; using default=%d", name, raw_value, default)
+        return default
+
+    clamped = max(min_value, min(max_value, parsed))
+    if clamped != parsed:
+        logger.warning(
+            "%s=%d is out of range [%d, %d]; clamped to %d",
+            name,
+            parsed,
+            min_value,
+            max_value,
+            clamped,
+        )
+    return clamped
+
+
+def _get_env_float(name: str, default: float, min_value: float, max_value: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        logger.warning("%s=%r is invalid; using default=%.2f", name, raw_value, default)
+        return default
+
+    clamped = max(min_value, min(max_value, parsed))
+    if clamped != parsed:
+        logger.warning(
+            "%s=%.3f is out of range [%.3f, %.3f]; clamped to %.3f",
+            name,
+            parsed,
+            min_value,
+            max_value,
+            clamped,
+        )
+    return clamped
+
+
+_max_concurrent_inferences = _get_env_int(
+    "LLAMA_MAX_CONCURRENT_INFERENCES",
+    default=1,
+    min_value=1,
+    max_value=64,
+)
+_inference_acquire_timeout_seconds = _get_env_float(
+    "LLAMA_INFERENCE_ACQUIRE_TIMEOUT_SECONDS",
+    default=45.0,
+    min_value=0.1,
+    max_value=600.0,
+)
+_inference_semaphore = Semaphore(_max_concurrent_inferences)
+
+
+@contextmanager
+def _acquire_inference_slot():
+    acquired = _inference_semaphore.acquire(timeout=_inference_acquire_timeout_seconds)
+    if not acquired:
+        raise InferenceOverloadedError(
+            "Inference queue timeout reached. Try again later or reduce request concurrency."
+        )
+
+    try:
+        yield
+    finally:
+        _inference_semaphore.release()
 
 
 def _build_sampling_kwargs(
@@ -101,7 +186,7 @@ def _clamp_int(value: int, min_value: int, max_value: int) -> int:
 
 def _apply_env_overrides(config: LlamaConfig) -> LlamaConfig:
     max_threads = os.cpu_count() or 1
-    max_gpu_layers = _clamp_int(int(os.getenv("LLAMA_MAX_GPU_LAYERS", "256")), 0, 4096)
+    max_gpu_layers = _get_env_int("LLAMA_MAX_GPU_LAYERS", default=256, min_value=0, max_value=4096)
 
     threads_env = os.getenv("LLAMA_N_THREADS")
     if threads_env is not None:
@@ -380,38 +465,39 @@ def translate_text(
     if content_type != "text":
         raise ValueError("Only 'text' content_type is supported by GGUF models in this API.")
 
-    llama = _ensure_loaded_model_is_text_only_or_raise(model_name)
+    with _acquire_inference_slot():
+        llama = _ensure_loaded_model_is_text_only_or_raise(model_name)
 
-    sampling_kwargs = _build_sampling_kwargs(
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        min_p=min_p,
-        repeat_penalty=repeat_penalty,
-        presence_penalty=presence_penalty,
-        frequency_penalty=frequency_penalty,
-    )
+        sampling_kwargs = _build_sampling_kwargs(
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            repeat_penalty=repeat_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
 
-    response = llama.create_chat_completion(
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "source_lang_code": source_lang_code,
-                        "target_lang_code": target_lang_code,
-                        "text": text,
-                    }
-                ],
-            }
-        ],
-        max_tokens=max_new_tokens,
-        **sampling_kwargs,
-    )
+        response = llama.create_chat_completion(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "source_lang_code": source_lang_code,
+                            "target_lang_code": target_lang_code,
+                            "text": text,
+                        }
+                    ],
+                }
+            ],
+            max_tokens=max_new_tokens,
+            **sampling_kwargs,
+        )
 
-    message = response["choices"][0]["message"]["content"]
-    return message.strip()
+        message = response["choices"][0]["message"]["content"]
+        return message.strip()
 
 
 def experimental_translate_text(
@@ -432,46 +518,47 @@ def experimental_translate_text(
     if content_type != "text":
         raise ValueError("Only 'text' content_type is supported by the experimental endpoint.")
 
-    llama = _ensure_loaded_model_is_text_only_or_raise(model_name)
+    with _acquire_inference_slot():
+        llama = _ensure_loaded_model_is_text_only_or_raise(model_name)
 
-    source_lang_code = _normalize_lang_code(source_lang_code)
-    target_lang_code = _normalize_lang_code(target_lang_code)
+        source_lang_code = _normalize_lang_code(source_lang_code)
+        target_lang_code = _normalize_lang_code(target_lang_code)
 
-    source_lang = source_lang_code
-    target_lang = target_lang_code
+        source_lang = source_lang_code
+        target_lang = target_lang_code
 
-    prompt_text = _manual_prompt_text(
-        source_lang=source_lang,
-        source_lang_code=source_lang_code,
-        target_lang=target_lang,
-        target_lang_code=target_lang_code,
-        text=text,
-    )
+        prompt_text = _manual_prompt_text(
+            source_lang=source_lang,
+            source_lang_code=source_lang_code,
+            target_lang=target_lang,
+            target_lang_code=target_lang_code,
+            text=text,
+        )
 
-    full_prompt = (
-        f"<start_of_turn>user\n{prompt_text}<end_of_turn>\n"
-        f"<start_of_turn>model\n"
-    )
+        full_prompt = (
+            f"<start_of_turn>user\n{prompt_text}<end_of_turn>\n"
+            f"<start_of_turn>model\n"
+        )
 
-    sampling_kwargs = _build_sampling_kwargs(
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        min_p=min_p,
-        repeat_penalty=repeat_penalty,
-        presence_penalty=presence_penalty,
-        frequency_penalty=frequency_penalty,
-    )
+        sampling_kwargs = _build_sampling_kwargs(
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            repeat_penalty=repeat_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
 
-    response = llama(
-        full_prompt,
-        max_tokens=max_new_tokens,
-        stop=["<end_of_turn>"],
-        **sampling_kwargs,
-    )
+        response = llama(
+            full_prompt,
+            max_tokens=max_new_tokens,
+            stop=["<end_of_turn>"],
+            **sampling_kwargs,
+        )
 
-    message = response["choices"][0]["text"]
-    return message.strip()
+        message = response["choices"][0]["text"]
+        return message.strip()
 
 def translate_image(
     model_name: str,
@@ -489,71 +576,72 @@ def translate_image(
     presence_penalty: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
 ) -> str:
-    llama = _ensure_loaded_model_supports_vision_or_raise(model_name)
-    source_lang_code = _normalize_lang_code(source_lang_code)
-    target_lang_code = _normalize_lang_code(target_lang_code)
-    source_lang = source_lang_code
-    target_lang = target_lang_code
+    with _acquire_inference_slot():
+        llama = _ensure_loaded_model_supports_vision_or_raise(model_name)
+        source_lang_code = _normalize_lang_code(source_lang_code)
+        target_lang_code = _normalize_lang_code(target_lang_code)
+        source_lang = source_lang_code
+        target_lang = target_lang_code
 
-    if image_bytes is not None:
-        if image_mime_type is None:
-            raise ValueError("image_mime_type must be provided if image_bytes is present")
-        prompt_text = _manual_image_prompt_text(
-            source_lang=source_lang,
-            source_lang_code=source_lang_code,
-            target_lang=target_lang,
-            target_lang_code=target_lang_code,
+        if image_bytes is not None:
+            if image_mime_type is None:
+                raise ValueError("image_mime_type must be provided if image_bytes is present")
+            prompt_text = _manual_image_prompt_text(
+                source_lang=source_lang,
+                source_lang_code=source_lang_code,
+                target_lang=target_lang,
+                target_lang_code=target_lang_code,
+            )
+            image_data_uri = _build_image_data_uri(image_bytes, image_mime_type)
+            content = [
+                {
+                    "type": "text",
+                    "text": prompt_text,
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_data_uri},
+                    "source_lang_code": source_lang_code,
+                    "target_lang_code": target_lang_code,
+                },
+            ]
+        elif text is not None:
+            prompt_text = _manual_prompt_text(
+                source_lang=source_lang,
+                source_lang_code=source_lang_code,
+                target_lang=target_lang,
+                target_lang_code=target_lang_code,
+                text=text,
+            )
+            content = [
+                {
+                    "type": "text",
+                    "text": prompt_text,
+                }
+            ]
+        else:
+            raise ValueError("Either image_bytes or text must be provided for translation")
+
+        sampling_kwargs = _build_sampling_kwargs(
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            repeat_penalty=repeat_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
         )
-        image_data_uri = _build_image_data_uri(image_bytes, image_mime_type)
-        content = [
-            {
-                "type": "text",
-                "text": prompt_text,
-            },
-            {
-                "type": "image_url",
-                "image_url": {"url": image_data_uri},
-                "source_lang_code": source_lang_code,
-                "target_lang_code": target_lang_code,
-            },
-        ]
-    elif text is not None:
-        prompt_text = _manual_prompt_text(
-            source_lang=source_lang,
-            source_lang_code=source_lang_code,
-            target_lang=target_lang,
-            target_lang_code=target_lang_code,
-            text=text,
+
+        response = llama.create_chat_completion(
+            messages=[
+                {
+                    "role": "user",
+                    "content": content,
+                }
+            ],
+            max_tokens=max_new_tokens,
+            **sampling_kwargs,
         )
-        content = [
-            {
-                "type": "text",
-                "text": prompt_text,
-            }
-        ]
-    else:
-        raise ValueError("Either image_bytes or text must be provided for translation")
 
-    sampling_kwargs = _build_sampling_kwargs(
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        min_p=min_p,
-        repeat_penalty=repeat_penalty,
-        presence_penalty=presence_penalty,
-        frequency_penalty=frequency_penalty,
-    )
-
-    response = llama.create_chat_completion(
-        messages=[
-            {
-                "role": "user",
-                "content": content,
-            }
-        ],
-        max_tokens=max_new_tokens,
-        **sampling_kwargs,
-    )
-
-    message = response["choices"][0]["message"]["content"]
-    return _sanitize_translation_output(message.strip())
+        message = response["choices"][0]["message"]["content"]
+        return _sanitize_translation_output(message.strip())

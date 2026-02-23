@@ -178,6 +178,36 @@ For development, you can run the application directly with Uvicorn, which enable
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
+### Concurrency Tuning (Recommended for CUDA stability)
+
+`llama-cpp-python` GGUF inference can become unstable under heavy parallel requests on some CUDA setups.
+This service includes a configurable inference gate shared by `/translate`, `/experimental_translation`, and `/translate_image`.
+
+```bash
+# safest default: serialize inference
+set LLAMA_MAX_CONCURRENT_INFERENCES=1
+
+# max wait in seconds before returning HTTP 503
+set LLAMA_INFERENCE_ACQUIRE_TIMEOUT_SECONDS=45
+```
+
+Notes:
+
+* Keep `LLAMA_MAX_CONCURRENT_INFERENCES=1` for 12B/27B models unless higher values are validated on your hardware.
+* If queue wait exceeds timeout, the API returns `503` instead of allowing requests to pile up indefinitely.
+* These can be passed alongside existing runtime env vars like `LLAMA_N_GPU_LAYERS`.
+
+Example:
+
+```bash
+docker run --gpus all -d --name ai_container_cuda -p 127.0.0.1:8080:8080 \
+    -v C:/Users/username/Desktop/git/fastapi-gemma-translate/_models:/code/models \
+    -e LLAMA_N_GPU_LAYERS=-1 \
+    -e LLAMA_MAX_CONCURRENT_INFERENCES=1 \
+    -e LLAMA_INFERENCE_ACQUIRE_TIMEOUT_SECONDS=45 \
+    grctest/fastapi_gemma_translate_cuda:legacy
+```
+
 ---
 
 ## API Usage

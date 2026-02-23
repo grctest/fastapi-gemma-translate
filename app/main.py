@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import asyncio
+import logging
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from lib.llama_service import (
+    InferenceOverloadedError,
     experimental_translate_text,
     get_loaded_model_name,
     is_loaded_model_vision_enabled,
@@ -20,7 +21,7 @@ from lib.locales import EXPERIMENTAL_SUPPORTED_LOCALES, SUPPORTED_LOCALES
 from lib.model_registry import list_model_names
 
 app = FastAPI(title="FastAPI Gemma Translate")
-image_inference_lock = asyncio.Lock()
+logger = logging.getLogger(__name__)
 
 class TranslationRequest(BaseModel):
     model: str = Field(..., description="Model name present in app/models")
@@ -325,8 +326,13 @@ def translate(request: TranslationRequest):
             presence_penalty=request.presence_penalty,
             frequency_penalty=request.frequency_penalty,
         )
+    except InferenceOverloadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unhandled /translate inference failure")
+        raise HTTPException(status_code=500, detail="Translation backend failed") from exc
 
     return TranslationResponse(model=request.model, translated_text=translated)
 
@@ -350,8 +356,13 @@ def experimental_translate(request: ExperimentalTranslationRequest):
             presence_penalty=request.presence_penalty,
             frequency_penalty=request.frequency_penalty,
         )
+    except InferenceOverloadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unhandled /experimental_translation inference failure")
+        raise HTTPException(status_code=500, detail="Translation backend failed") from exc
 
     return TranslationResponse(model=request.model, translated_text=translated)
 
@@ -391,25 +402,29 @@ async def translate_image_route(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    async with image_inference_lock:
-        try:
-            translated = translate_image(
-                model_name=model,
-                source_lang_code=source_lang_code,
-                target_lang_code=target_lang_code,
-                image_bytes=image_bytes,
-                image_mime_type=image_mime_type,
-                text=text,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                min_p=min_p,
-                repeat_penalty=repeat_penalty,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        translated = translate_image(
+            model_name=model,
+            source_lang_code=source_lang_code,
+            target_lang_code=target_lang_code,
+            image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
+            text=text,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            repeat_penalty=repeat_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
+    except InferenceOverloadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unhandled /translate_image inference failure")
+        raise HTTPException(status_code=500, detail="Translation backend failed") from exc
 
     return TranslationResponse(model=model, translated_text=translated)
