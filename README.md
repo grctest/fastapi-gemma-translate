@@ -266,6 +266,12 @@ curl -X POST "http://127.0.0.1:8080/experimental_translate_image" \
 
 ---
 
+## Real life usage
+
+This FastAPI Gemma Translate Docker container code is used by [Metalglot](https://metalglot.com) software translation tool!
+
+---
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
