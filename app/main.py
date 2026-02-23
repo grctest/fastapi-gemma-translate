@@ -6,7 +6,6 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from lib.llama_service import (
-    experimental_translate_image,
     experimental_translate_text,
     get_loaded_model_name,
     is_loaded_model_vision_enabled,
@@ -264,9 +263,9 @@ def _validate_image_route_inputs(model: str, source_lang_code: str, target_lang_
         allowed = ", ".join(available) if available else "(no models found)"
         raise ValueError(f"Model must be one of: {allowed}")
 
-    if source_lang_code not in SUPPORTED_LOCALES:
+    if source_lang_code not in SUPPORTED_LOCALES and source_lang_code not in EXPERIMENTAL_SUPPORTED_LOCALES:
         raise ValueError("Unsupported source language code")
-    if target_lang_code not in SUPPORTED_LOCALES:
+    if target_lang_code not in SUPPORTED_LOCALES and target_lang_code not in EXPERIMENTAL_SUPPORTED_LOCALES:
         raise ValueError("Unsupported target language code")
     if source_lang_code == target_lang_code:
         raise ValueError("source_lang_code and target_lang_code must differ")
@@ -299,25 +298,6 @@ def _ensure_text_translation_ready(model: str) -> None:
             "chat handling. Unload and reload the model without 'mmproj' to use /translate or "
             "/experimental_translation."
         )
-
-
-def _validate_experimental_image_route_inputs(
-    model: str,
-    source_lang_code: str,
-    target_lang_code: str,
-) -> None:
-    available = list_model_names()
-    if model not in available:
-        allowed = ", ".join(available) if available else "(no models found)"
-        raise ValueError(f"Model must be one of: {allowed}")
-
-    if source_lang_code not in SUPPORTED_LOCALES and source_lang_code not in EXPERIMENTAL_SUPPORTED_LOCALES:
-        raise ValueError("Unsupported source language code")
-    if target_lang_code not in SUPPORTED_LOCALES and target_lang_code not in EXPERIMENTAL_SUPPORTED_LOCALES:
-        raise ValueError("Unsupported target language code")
-    if source_lang_code == target_lang_code:
-        raise ValueError("source_lang_code and target_lang_code must differ")
-
 
 def _validate_upload_is_image(file: UploadFile) -> str:
     content_type = file.content_type or ""
@@ -378,7 +358,8 @@ def experimental_translate(request: ExperimentalTranslationRequest):
 
 @app.post("/translate_image", response_model=TranslationResponse)
 async def translate_image_route(
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
+    text: str | None = Form(None),
     model: str = Form(...),
     source_lang_code: str = Form(...),
     target_lang_code: str = Form(...),
@@ -394,13 +375,21 @@ async def translate_image_route(
     try:
         _validate_image_route_inputs(model=model, source_lang_code=source_lang_code, target_lang_code=target_lang_code)
         _ensure_image_translation_ready(model)
-        image_mime_type = _validate_upload_is_image(file)
+
+        image_bytes = None
+        image_mime_type = None
+
+        if file is not None and file.filename:
+            image_mime_type = _validate_upload_is_image(file)
+            image_bytes = await file.read()
+            if not image_bytes:
+                raise ValueError("Uploaded image is empty.")
+
+        if image_bytes is None and text is None:
+            raise ValueError("Either an image file or text must be provided.")
+
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    image_bytes = await file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded image is empty.")
 
     async with image_inference_lock:
         try:
@@ -410,59 +399,7 @@ async def translate_image_route(
                 target_lang_code=target_lang_code,
                 image_bytes=image_bytes,
                 image_mime_type=image_mime_type,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                min_p=min_p,
-                repeat_penalty=repeat_penalty,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return TranslationResponse(model=model, translated_text=translated)
-
-
-@app.post("/experimental_translate_image", response_model=TranslationResponse)
-async def experimental_translate_image_route(
-    file: UploadFile = File(...),
-    model: str = Form(...),
-    source_lang_code: str = Form(...),
-    target_lang_code: str = Form(...),
-    max_new_tokens: int = Form(200, ge=1, le=2000),
-    temperature: float | None = Form(None, ge=0.0, le=2.0),
-    top_p: float | None = Form(None, ge=0.0, le=1.0),
-    top_k: int | None = Form(None, ge=0, le=1000),
-    min_p: float | None = Form(None, ge=0.0, le=1.0),
-    repeat_penalty: float | None = Form(None, ge=0.0, le=2.0),
-    presence_penalty: float | None = Form(None, ge=0.0, le=2.0),
-    frequency_penalty: float | None = Form(None, ge=0.0, le=2.0),
-):
-    try:
-        _validate_experimental_image_route_inputs(
-            model=model,
-            source_lang_code=source_lang_code,
-            target_lang_code=target_lang_code,
-        )
-        _ensure_image_translation_ready(model)
-        image_mime_type = _validate_upload_is_image(file)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    image_bytes = await file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded image is empty.")
-
-    async with image_inference_lock:
-        try:
-            translated = experimental_translate_image(
-                model_name=model,
-                source_lang_code=source_lang_code,
-                target_lang_code=target_lang_code,
-                image_bytes=image_bytes,
-                image_mime_type=image_mime_type,
+                text=text,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,

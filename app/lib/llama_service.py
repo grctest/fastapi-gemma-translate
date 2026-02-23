@@ -473,13 +473,13 @@ def experimental_translate_text(
     message = response["choices"][0]["text"]
     return message.strip()
 
-
 def translate_image(
     model_name: str,
     source_lang_code: str,
     target_lang_code: str,
-    image_bytes: bytes,
-    image_mime_type: str,
+    image_bytes: Optional[bytes] = None,
+    image_mime_type: Optional[str] = None,
+    text: Optional[str] = None,
     max_new_tokens: int = 200,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
@@ -495,14 +495,44 @@ def translate_image(
     source_lang = source_lang_code
     target_lang = target_lang_code
 
-    prompt_text = _manual_image_prompt_text(
-        source_lang=source_lang,
-        source_lang_code=source_lang_code,
-        target_lang=target_lang,
-        target_lang_code=target_lang_code,
-    )
-
-    image_data_uri = _build_image_data_uri(image_bytes, image_mime_type)
+    if image_bytes is not None:
+        if image_mime_type is None:
+            raise ValueError("image_mime_type must be provided if image_bytes is present")
+        prompt_text = _manual_image_prompt_text(
+            source_lang=source_lang,
+            source_lang_code=source_lang_code,
+            target_lang=target_lang,
+            target_lang_code=target_lang_code,
+        )
+        image_data_uri = _build_image_data_uri(image_bytes, image_mime_type)
+        content = [
+            {
+                "type": "text",
+                "text": prompt_text,
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": image_data_uri},
+                "source_lang_code": source_lang_code,
+                "target_lang_code": target_lang_code,
+            },
+        ]
+    elif text is not None:
+        prompt_text = _manual_prompt_text(
+            source_lang=source_lang,
+            source_lang_code=source_lang_code,
+            target_lang=target_lang,
+            target_lang_code=target_lang_code,
+            text=text,
+        )
+        content = [
+            {
+                "type": "text",
+                "text": prompt_text,
+            }
+        ]
+    else:
+        raise ValueError("Either image_bytes or text must be provided for translation")
 
     sampling_kwargs = _build_sampling_kwargs(
         temperature=temperature,
@@ -518,18 +548,7 @@ def translate_image(
         messages=[
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_text,
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": image_data_uri},
-                        "source_lang_code": source_lang_code,
-                        "target_lang_code": target_lang_code,
-                    }
-                ],
+                "content": content,
             }
         ],
         max_tokens=max_new_tokens,
@@ -538,37 +557,3 @@ def translate_image(
 
     message = response["choices"][0]["message"]["content"]
     return _sanitize_translation_output(message.strip())
-
-
-def experimental_translate_image(
-    model_name: str,
-    source_lang_code: str,
-    target_lang_code: str,
-    image_bytes: bytes,
-    image_mime_type: str,
-    max_new_tokens: int = 200,
-    temperature: Optional[float] = None,
-    top_p: Optional[float] = None,
-    top_k: Optional[int] = None,
-    min_p: Optional[float] = None,
-    repeat_penalty: Optional[float] = None,
-    presence_penalty: Optional[float] = None,
-    frequency_penalty: Optional[float] = None,
-) -> str:
-    source_lang_code = _normalize_lang_code(source_lang_code)
-    target_lang_code = _normalize_lang_code(target_lang_code)
-    return translate_image(
-        model_name=model_name,
-        source_lang_code=source_lang_code,
-        target_lang_code=target_lang_code,
-        image_bytes=image_bytes,
-        image_mime_type=image_mime_type,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        min_p=min_p,
-        repeat_penalty=repeat_penalty,
-        presence_penalty=presence_penalty,
-        frequency_penalty=frequency_penalty,
-    )

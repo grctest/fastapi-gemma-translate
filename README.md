@@ -234,7 +234,6 @@ Both endpoints reject if:
 This API supports image translation via multipart upload using `llama-cpp-python` vision chat formatting.
 
 * `POST /translate_image` (stable locale list)
-* `POST /experimental_translate_image` (stable + experimental locale list)
 
 Notes:
 
@@ -251,16 +250,6 @@ curl -X POST "http://127.0.0.1:8080/translate_image" \
     -F "model=translategemma-4b-it-Q8_0" \
     -F "source_lang_code=en" \
     -F "target_lang_code=es" \
-    -F "max_new_tokens=200"
-```
-
-Example (experimental image route):
-```bash
-curl -X POST "http://127.0.0.1:8080/experimental_translate_image" \
-    -F "file=@C:/path/to/image.jpg" \
-    -F "model=translategemma-4b-it-Q8_0" \
-    -F "source_lang_code=en" \
-    -F "target_lang_code=ace" \
     -F "max_new_tokens=200"
 ```
 
