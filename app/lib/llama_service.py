@@ -41,7 +41,7 @@ def _get_env_int(name: str, default: int, min_value: int, max_value: int) -> int
         logger.warning("%s=%r is invalid; using default=%d", name, raw_value, default)
         return default
 
-    clamped = _clamp_int(parsed, min_value, max_value)
+    clamped = max(min_value, min(max_value, parsed))
     if clamped != parsed:
         logger.warning(
             "%s=%d is out of range [%d, %d]; clamped to %d",
