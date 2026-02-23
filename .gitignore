@@ -166,3 +166,4 @@ app/models/*/*
 !app/lib
 _models/translategemma-4b-it-Q3_K_L/translategemma-4b-it-Q3_K_L.gguf
 _models/translategemma-4b-it-Q3_K_L/translategemma-4b-it-Q3_K_L.gguf.sha256.txt
+/_models
