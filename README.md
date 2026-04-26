@@ -285,9 +285,11 @@ curl -X POST "http://127.0.0.1:8080/translate_image" \
 
 ---
 
-## Real life usage
+## Project showcase
 
-This FastAPI Gemma Translate Docker container code is used by [Metalglot](https://metalglot.com) software translation tool!
+### MetalGlot
+
+[MetalGlot](https://metalglot.com) is a private, local-first AI translation desktop app for developers and creators who desire a secure translation workflow without relying on cloud services. Built primarily for software localization and structured i18n content, MetalGlot helps users translate text, locale files, markdown, subtitles, and image-based content on their own hardware while avoiding telemetry, protecting intellectual property, and eliminating recurring per-token costs.
 
 ---
 
